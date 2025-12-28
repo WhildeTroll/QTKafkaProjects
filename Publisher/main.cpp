@@ -56,6 +56,12 @@ int main(int argc, char *argv[]) {
     // Создаем конфигурацию
     rd_kafka_conf_t* conf = rd_kafka_conf_new();
     char errstr[512];
+    // Установка группы потребителей
+    if (rd_kafka_conf_set(conf, "group.id", "test_consumer_group",
+                          errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+        fprintf(stderr, "Ошибка установки group.id: %s\n", errstr);
+        return 1;
+    }
 
     if (rd_kafka_conf_set(conf, "bootstrap.servers", brokers,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
