@@ -1,74 +1,64 @@
-#include <QCoreApplication>
-#include <QLibrary>
-#include <QDebug>
-#include <QFileInfo>
-#include <QCommandLineParser>
 #include <iostream>
+#include <string>
+#include <cstdlib>
+#include <cstring>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <dlfcn.h>
 
-typedef void (*ConsumerFunction)();
+class SharedLibLauncher {
+public:
+    static int launch(const std::string& libraryPath) {
+        // Загружаем библиотеку
+        void* handle = dlopen(libraryPath.c_str(), RTLD_LAZY);
+        if (!handle) {
+            std::cerr << "Ошибка загрузки библиотеки: " << dlerror() << std::endl;
+            return -1;
+        }
 
-int main(int argc, char *argv[])
-{
-    QCoreApplication app(argc, argv);
+        // Ищем точку входа (обычно main или run)
+        typedef int (*EntryPoint)();
 
-    QCommandLineParser parser;
-    parser.setApplicationDescription("Consumer Library Launcher");
-    parser.addHelpOption();
+        // Пробуем разные возможные имена функций входа
+        EntryPoint entry = nullptr;
+        const char* possibleEntries[] = {"main", "run", "start", "execute"};
 
-    parser.addPositionalArgument("library",
-        "Path to shared library (.so file)");
+        for (const char* entryName : possibleEntries) {
+            entry = (EntryPoint)dlsym(handle, entryName);
+            if (entry) {
+                break;
+            }
+        }
 
-    QCommandLineOption functionOption(QStringList() << "f" << "function",
-        "Function name to call (default: 'consumer')",
-        "function",
-        "consumer");
+        if (!entry) {
+            std::cerr << "Не найдена точка входа в библиотеке" << std::endl;
+            dlclose(handle);
+            return -1;
+        }
 
-    parser.addOption(functionOption);
-    parser.process(app);
+        // Вызываем точку входа
+        int result = entry();
 
-    const QStringList args = parser.positionalArguments();
+        // Закрываем библиотеку
+        dlclose(handle);
 
-    if (args.isEmpty()) {
-        std::cerr << "Error: Library path not specified" << std::endl;
-        parser.showHelp(1);
+        return result;
     }
+};
 
-    QString libraryPath = args.first();
-    QString functionName = parser.value(functionOption);
-
-    QFileInfo fileInfo(libraryPath);
-    if (!fileInfo.exists()) {
-        qCritical() << "Error: File" << libraryPath << "does not exist";
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        std::cerr << "Использование: " << argv[0] << " <путь_к_библиотеке>" << std::endl;
+        std::cerr << "Пример: " << argv[0] << " Consumer" << std::endl;
         return 1;
     }
 
-    qInfo() << "Loading library:" << libraryPath;
-    qInfo() << "Calling function:" << functionName;
+    std::string libraryPath = argv[1];
 
-    QLibrary library(libraryPath);
-
-    if (!library.load()) {
-        qCritical() << "Failed to load library:";
-        qCritical() << library.errorString();
-        return 1;
+    // Если путь не абсолютный, добавляем текущую директорию
+    if (libraryPath.find('/') == std::string::npos) {
+        libraryPath = "./" + libraryPath;
     }
 
-    ConsumerFunction consumerFunc =
-        reinterpret_cast<ConsumerFunction>(library.resolve(functionName.toUtf8().constData()));
-
-    if (!consumerFunc) {
-        qCritical() << "Error: Function" << functionName << "not found";
-        library.unload();
-        return 1;
-    }
-
-    qInfo() << "Function found, executing...";
-
-    consumerFunc();
-
-    qInfo() << "Function executed successfully";
-
-    library.unload();
-
-    return 0;
+    return SharedLibLauncher::launch(libraryPath);
 }
